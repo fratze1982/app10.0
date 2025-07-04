@@ -4,7 +4,6 @@ import numpy as np
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.multioutput import MultiOutputRegressor
 import matplotlib.pyplot as plt
-import openai
 
 st.set_page_config(page_title="KI-Vorhersage für Lackrezepturen", layout="wide")
 st.title("\U0001F3A8 KI-Vorhersage für Lackrezepturen")
@@ -139,54 +138,40 @@ if all(col in zielspalten for col in vorhandene_cols):
     ax2.legend()
     st.pyplot(fig2)
 
-# --- GPT-basiertes Frage-Modul ---
-st.subheader("\U0001F9E0 Intelligentes Frage-Modul (KI gestützt)")
-api_key = st.secrets.get("openai_api_key") or st.text_input("\U0001F511 OpenAI API-Key eingeben:", type="password")
-frage = st.text_input("\U0001F4E3 Stelle deine Frage zu Rohstoffen, Kosten oder Eigenschaften:")
+# --- Lokales Frage-Modul (Variante 1) ---
+st.subheader("\U0001F9E0 Frage-Modul (lokal, einfache Logik)")
+frage = st.text_input("\U0001F50D Stelle eine Frage zu Rohstoffen, Kosten oder Eigenschaften:")
 
-if frage and not api_key:
-    st.error("\u274C Bitte gib deinen OpenAI API-Key ein.")
-    st.stop()
+if frage:
+    antwort = ""
+    lower_frage = frage.lower()
 
-if frage and api_key:
-    with st.spinner("\U0001F50D GPT analysiert deine Daten und erstellt eine Antwort ..."):
-        korrelations_info = ""
+    bekannte_ziele = ['kratzschutz', 'glanz', 'kosten', 'viskosität']
+    erkannte_ziele = [ziel for ziel in bekannte_ziele if ziel in lower_frage]
+
+    bekannte_rohstoffe = [c.lower() for c in rohstoff_spalten]
+    erkannte_rohstoffe = [r for r in bekannte_rohstoffe if r in lower_frage]
+
+    if not erkannte_rohstoffe or not erkannte_ziele:
+        antwort = "❓ Frage konnte nicht eindeutig interpretiert werden. Bitte nenne einen bekannten Rohstoff und eine Zielgröße."
+    else:
         try:
             korrelations = df.corr(numeric_only=True)
-            if 'Kratzschutz' in korrelations.columns:
-                top_korr = korrelations['Kratzschutz'].sort_values(ascending=False).head(5)
-                korrelations_info = f"\n\nKorrelationen mit Kratzschutz:\n{top_korr.to_string()}"
-            elif 'KostenGesamtkg' in korrelations.columns:
-                top_korr = korrelations['KostenGesamtkg'].sort_values(ascending=False).head(5)
-                korrelations_info = f"\n\nKorrelationen mit KostenGesamtkg:\n{top_korr.to_string()}"
-        except:
-            korrelations_info = "\n\n(Hinweis: Keine sinnvolle Korrelationsanalyse möglich)"
+            ziel_kandidat = erkannte_ziele[0].capitalize()
+            rohstoff_kandidat = [r for r in df.columns if r.lower() == erkannte_rohstoffe[0]][0]
 
-        prompt = f"""
-Du bist ein technischer Experte für Lackrezepturen. Hier ist eine Frage aus der F&E:
-
-Frage: {frage}
-
-Die Frage bezieht sich auf eine CSV-Datei mit Rohstoffdaten, Rezepturen und Messwerten.
-Hier einige statistische Zusammenhänge aus der Datei, die dir helfen können:
-
-{korrelations_info}
-
-Antworte bitte mit einer fundierten, fachlich korrekten Einschätzung. Wenn keine Antwort aus den Daten direkt möglich ist, gib eine fachlich sinnvolle Erklärung oder Vermutung ab.
-"""
-
-        try:
-            openai.api_key = api_key
-            response = openai.ChatCompletion.create(
-                model="gpt-4",
-                messages=[
-                    {"role": "system", "content": "Du bist ein Chemie-Experte für Lacke und Formulierungen in der industriellen F&E."},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.4
-            )
-            antwort = response.choices[0].message.content.strip()
-            st.markdown("\U0001F9FE **GPT-Antwort:**")
-            st.markdown(antwort)
+            if ziel_kandidat in korrelations.columns and rohstoff_kandidat in korrelations.index:
+                korrelation = korrelations.loc[rohstoff_kandidat, ziel_kandidat]
+                antwort = f"🔍 Die Korrelation zwischen **{rohstoff_kandidat}** und **{ziel_kandidat}** beträgt {korrelation:.2f}."
+                if abs(korrelation) > 0.5:
+                    antwort += " → Das ist ein starker Zusammenhang."
+                elif abs(korrelation) > 0.3:
+                    antwort += " → Das ist ein mäßiger Zusammenhang."
+                else:
+                    antwort += " → Der Zusammenhang ist eher schwach."
+            else:
+                antwort = f"⚠️ Leider liegen keine Korrelationsdaten für {rohstoff_kandidat} oder {ziel_kandidat} vor."
         except Exception as e:
-            st.error(f"\u274C Fehler bei der GPT-Abfrage: {e}")
+            antwort = f"❌ Fehler bei der Analyse: {e}"
+
+    st.markdown(antwort)
